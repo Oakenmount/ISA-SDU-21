@@ -31,7 +31,10 @@ class ImageStackRandomizer(Sequence):
         for i,f in enumerate(raw_x):
             img = io.imread("../data/processed/"+f).astype('float32') / 255.
             top = np.copy(img[0])
-            bleached = np.copy(img[randint(1,15)]) # random bleach between 0-10 (easiest)
+            bleach_id = 10
+            if self.augment:
+                bleach_id = randint(1,20)
+            bleached = np.copy(img[bleach_id]) # random bleach between 0-10 (easiest)
             img = None # hopefully this will aide the garbage collection and reduce memory.
 
             if self.augment:
@@ -49,42 +52,84 @@ class ImageStackRandomizer(Sequence):
 
 
 #MODEL CREATION
-input_img = keras.Input(shape=(512, 512, 1))
+def simpleUNet():
+    input_img = keras.Input(shape=(512, 512, 1))
 
-con1 = layers.Conv2D(64, (3, 3), activation='relu', padding='same')(input_img)
-x = layers.BatchNormalization()(con1)
-x = layers.MaxPooling2D((2, 2), padding='same')(x)
-con2 = layers.Conv2D(64, (3, 3), activation='relu', padding='same')(x)
-x = layers.BatchNormalization()(con2)
-x = layers.MaxPooling2D((2, 2), padding='same')(x)
-con3 = layers.Conv2D(32, (3, 3), activation='relu', padding='same')(x)
-x = layers.BatchNormalization()(con3)
-x = layers.MaxPooling2D((2, 2), padding='same')(x)
-con4 = layers.Conv2D(16, (3, 3), activation='relu', padding='same')(x)
-x = layers.BatchNormalization()(con4)
-encoded = layers.MaxPooling2D((2, 2), padding='same')(x)
+    con1 = layers.Conv2D(64, (3, 3), activation='relu', padding='same')(input_img)
+    x = layers.BatchNormalization()(con1)
+    x = layers.MaxPooling2D((2, 2), padding='same')(x)
+    con2 = layers.Conv2D(64, (3, 3), activation='relu', padding='same')(x)
+    x = layers.BatchNormalization()(con2)
+    x = layers.MaxPooling2D((2, 2), padding='same')(x)
+    con3 = layers.Conv2D(32, (3, 3), activation='relu', padding='same')(x)
+    x = layers.BatchNormalization()(con3)
+    x = layers.MaxPooling2D((2, 2), padding='same')(x)
+    con4 = layers.Conv2D(16, (3, 3), activation='relu', padding='same')(x)
+    x = layers.BatchNormalization()(con4)
+    encoded = layers.MaxPooling2D((2, 2), padding='same')(x)
 
-x = layers.Conv2D(16, (3, 3), activation='relu', padding='same')(encoded)
-x = layers.BatchNormalization()(x)
-x = layers.UpSampling2D((2, 2))(x)
-x = layers.Conv2D(32, (3, 3), activation='relu', padding='same')(layers.Add()([x,con4]))
-x = layers.BatchNormalization()(x)
-x = layers.UpSampling2D((2, 2))(x)
-x = layers.Conv2D(64, (3, 3), activation='relu', padding='same')(layers.Add()([x,con3]))
-x = layers.BatchNormalization()(x)
-x = layers.UpSampling2D((2, 2))(x)
-x = layers.Conv2D(64, (3, 3), activation='relu', padding='same')(layers.Add()([x,con2]))
-x = layers.BatchNormalization()(x)
-x = layers.UpSampling2D((2, 2))(x)
-decoded = layers.Conv2D(1, (3, 3), padding='same')(layers.Add()([x,con1]))
+    x = layers.Conv2D(16, (3, 3), activation='relu', padding='same')(encoded)
+    x = layers.BatchNormalization()(x)
+    x = layers.UpSampling2D((2, 2))(x)
+    x = layers.Conv2D(32, (3, 3), activation='relu', padding='same')(layers.Add()([x,con4]))
+    x = layers.BatchNormalization()(x)
+    x = layers.UpSampling2D((2, 2))(x)
+    x = layers.Conv2D(64, (3, 3), activation='relu', padding='same')(layers.Add()([x,con3]))
+    x = layers.BatchNormalization()(x)
+    x = layers.UpSampling2D((2, 2))(x)
+    x = layers.Conv2D(64, (3, 3), activation='relu', padding='same')(layers.Add()([x,con2]))
+    x = layers.BatchNormalization()(x)
+    x = layers.UpSampling2D((2, 2))(x)
+    decoded = layers.Conv2D(1, (3, 3), padding='same')(layers.Add()([x,con1]))
 
-autoencoder = keras.Model(input_img, decoded)
-autoencoder.compile(optimizer='adam', loss='mse')
-autoencoder.summary()
+    model = keras.Model(input_img, decoded)
+    model.compile(optimizer='adam', loss='mse')
+    return model
+
+def convBlock(input,filters):
+    x = layers.Conv2D(filters, (3, 3), padding='same')(input)
+    x = layers.BatchNormalization()(x)
+    x = layers.ReLU()(x)
+    x = layers.Conv2D(filters, (3, 3), padding='same')(x)
+    x = layers.BatchNormalization()(x)
+    return layers.ReLU()(x)
+
+def upConvBlock(input,skip,filters):
+    x = layers.UpSampling2D((2, 2))(input)
+    x = layers.Conv2D(filters, (3, 3), padding='same')(layers.Concatenate()([x,skip]))
+    x = layers.BatchNormalization()(x)
+    x = layers.ReLU()(x)
+    x = layers.Conv2D(filters/2, (3, 3), padding='same')(x)
+    x = layers.BatchNormalization()(x)
+    return layers.ReLU()(x)
+
+def advancedUNet():
+    input_img = keras.Input(shape=(512, 512, 1))
+
+    block1 = convBlock(input_img,32)
+    x = layers.MaxPooling2D((2, 2), padding='same')(block1)
+    block2 = convBlock(x,32)
+    x = layers.MaxPooling2D((2, 2), padding='same')(block2)
+    block3 = convBlock(x,32)
+    x = layers.MaxPooling2D((2, 2), padding='same')(block3)
+    block4 = convBlock(x,32)
+    x = layers.MaxPooling2D((2, 2), padding='same')(block4)
+    x = convBlock(x,32)
+    x = upConvBlock(x,block4,32)
+    x = upConvBlock(x,block3,32)
+    x = upConvBlock(x,block2,32)
+    x = upConvBlock(x,block1,32)
+    decoded = layers.Conv2D(1, (3, 3), padding='same')(x)
+
+    model = keras.Model(input_img, decoded)
+    model.compile(optimizer='adam', loss='mse')
+    model.summary()
+    return model
+
 #TRAINING DATA SETUP
 
 dataset = np.array(listdir("../data/processed")) # we use np.take
-X_train,X_val = train_test_split(dataset,train_size=0.8,random_state=1)
+X_train,X_val = train_test_split(dataset,train_size=0.85,random_state=1)
 
 batch_size = 10
 
@@ -98,7 +143,8 @@ validationGen = ImageStackRandomizer(X_val, batch_size)
 train_checkpoint = ModelCheckpoint("trained_model.hdf5", monitor='loss', verbose=1, save_best_only=True, mode='auto', save_freq='epoch')
 val_checkpoint = ModelCheckpoint("validated_model.hdf5", monitor='val_loss', verbose=1, save_best_only=True, mode='auto', save_freq='epoch')
 
-history = autoencoder.fit(trainingGen,
+model = advancedUNet()
+history = model.fit(trainingGen,
                 epochs=100,
                 batch_size=batch_size,
                 shuffle=True,
@@ -106,7 +152,6 @@ history = autoencoder.fit(trainingGen,
                 callbacks=[TensorBoard(log_dir='/tmp/autoencoder'),train_checkpoint,val_checkpoint])
 
 def plot_data(history):
-    plt.subplot(2, 1, 1)
     plt.title('Loss')
     plt.plot(history.history['loss'], color='blue')
     plt.plot(history.history['val_loss'], color='red')
